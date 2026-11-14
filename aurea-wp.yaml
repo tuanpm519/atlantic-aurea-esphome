@@ -74,7 +74,7 @@ chofu_wp:
   # "Settings"). These are the fixed limits:
   # dt_low: 4.0          # lower edge of the healthy delta-T band (°C)
   # setpoint_min: 6.5    # range of the supply setpoint (Chofu datasheet)
-  # setpoint_max: 60.0
+  setpoint_max: 42.0     # was 60: efficiency guard
   # cooling_min_supply: 5.0  # frost protection when cooling
 
 logger:
@@ -278,7 +278,7 @@ number:
     min_value: 0
     max_value: 15
     step: 0.5
-    initial_value: 4
+    initial_value: 3        # was 4
     optimistic: true
     restore_value: true
     unit_of_measurement: "°C/°C"
@@ -364,8 +364,8 @@ number:
     id: n_room_ki
     min_value: 0
     max_value: 1
-    step: 0.05
-    initial_value: 0
+    step: 0.005             # was 0.05: too coarse for the useful range
+    initial_value: 0.03     # was 0
     optimistic: true
     restore_value: true
     unit_of_measurement: "°C/°C·min"
@@ -409,7 +409,7 @@ number:
     min_value: 20
     max_value: 60
     step: 0.5
-    initial_value: 50
+    initial_value: 48.5     # was 50; now the supply at -10 °C for a room target of "Curve reference"
     optimistic: true
     restore_value: true
     unit_of_measurement: "°C"
@@ -429,7 +429,7 @@ number:
     min_value: 20
     max_value: 60
     step: 0.5
-    initial_value: 30
+    initial_value: 26       # was 30; supply at +15 °C for a room target of "Curve reference"
     optimistic: true
     restore_value: true
     unit_of_measurement: "°C"
@@ -465,6 +465,48 @@ number:
       sorting_group_id: grp_stooklijn
       sorting_weight: 12
 
+  # ── NEW: parallel shift of the heating curve with the room target ──
+  # supply = curve(outdoor) + shift * (room target - reference)
+  - platform: template
+    name: "Curve shift"
+    id: n_curve_shift
+    min_value: 0
+    max_value: 4
+    step: 0.1
+    initial_value: 1.9
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "°C/°C"
+    mode: box
+    icon: mdi:arrow-up-down
+    entity_category: config
+    on_value:
+      then:
+        - lambda: 'id(wp)->set_curve_shift(x);'
+    web_server:
+      sorting_group_id: grp_stooklijn
+      sorting_weight: 13
+
+  - platform: template
+    name: "Curve reference"
+    id: n_curve_ref
+    min_value: 15
+    max_value: 25
+    step: 0.5
+    initial_value: 20
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "°C"
+    mode: box
+    icon: mdi:home-thermometer-outline
+    entity_category: config
+    on_value:
+      then:
+        - lambda: 'id(wp)->set_curve_ref(x);'
+    web_server:
+      sorting_group_id: grp_stooklijn
+      sorting_weight: 14
+
   # ── Control settings ──
 
   # How fast the control may step up: at most +1 stage per interval.
@@ -477,7 +519,7 @@ number:
     min_value: 10
     max_value: 600
     step: 5
-    initial_value: 120
+    initial_value: 360      # was 120: the water loop needs 15-20 min to settle
     optimistic: true
     restore_value: true
     unit_of_measurement: "s"
@@ -523,7 +565,7 @@ number:
     min_value: 10
     max_value: 300
     step: 5
-    initial_value: 30
+    initial_value: 240      # was 30
     optimistic: true
     restore_value: true
     unit_of_measurement: "s"
@@ -548,7 +590,7 @@ number:
     min_value: 1
     max_value: 10
     step: 1
-    initial_value: 10
+    initial_value: 4        # was 10
     optimistic: true
     restore_value: true
     mode: slider
@@ -594,7 +636,7 @@ number:
     min_value: 0
     max_value: 200
     step: 10
-    initial_value: 120
+    initial_value: 200      # was 120
     optimistic: true
     restore_value: true
     unit_of_measurement: "s"
@@ -619,7 +661,7 @@ number:
     min_value: 0
     max_value: 5
     step: 0.5
-    initial_value: 2
+    initial_value: 3        # was 2
     optimistic: true
     restore_value: true
     unit_of_measurement: "min"
@@ -664,7 +706,7 @@ number:
     min_value: 0
     max_value: 5
     step: 0.5
-    initial_value: 1
+    initial_value: 0.5      # was 1
     optimistic: true
     restore_value: true
     unit_of_measurement: "°C/min"
@@ -677,6 +719,28 @@ number:
     web_server:
       sorting_group_id: grp_instellingen
       sorting_weight: 8
+
+  # NEW: dead band around the supply target. The supply ripples by several °C with the
+  # compressor running; a band below that makes the stage hunt. Was fixed at 0.3.
+  - platform: template
+    name: "Supply dead band"
+    id: n_band
+    min_value: 0.2
+    max_value: 3
+    step: 0.1
+    initial_value: 1.0
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "°C"
+    mode: box
+    icon: mdi:arrow-expand-vertical
+    entity_category: config
+    on_value:
+      then:
+        - lambda: 'id(wp)->set_band(x);'
+    web_server:
+      sorting_group_id: grp_instellingen
+      sorting_weight: 9
 
 switch:
   # Master on/off. Always back on after a restart.
@@ -996,6 +1060,19 @@ sensor:
     web_server:
       sorting_group_id: grp_stooklijn
       sorting_weight: 9
+
+  # NEW: the trim (I term), for tuning
+  - platform: template
+    name: "Room trim (I term)"
+    lambda: 'return id(wp)->get_room_i();'
+    update_interval: 60s
+    unit_of_measurement: "°C"
+    state_class: measurement
+    accuracy_decimals: 2
+    icon: mdi:sigma
+    web_server:
+      sorting_group_id: grp_stooklijn
+      sorting_weight: 10
 
   # ── Diagnostics ──
   - platform: uptime

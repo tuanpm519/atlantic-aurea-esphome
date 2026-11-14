@@ -39,6 +39,7 @@ void ChofuWP::dump_config() {
                 dt_high_, max_stand_, (unsigned) (step_interval_ms_ / 1000));
   ESP_LOGCONFIG(TAG, "  Heating curve: %.1f°C at -10, %.1f°C at +15, heating limit %.1f°C", curve_cold_,
                 curve_warm_, heat_limit_);
+  ESP_LOGCONFIG(TAG, "  Curve shift: %.2f °C per °C room target away from %.1f°C", curve_shift_, curve_ref_);
   this->check_uart_settings(666);
 }
 
@@ -336,7 +337,10 @@ float ChofuWP::get_curve_supply() const {
     return NAN;
   // Straight line between (-10, curve_cold_) and (+15, curve_warm_), constant outside.
   const float b = clamp(t_outside_, -10.0f, 15.0f);
-  return curve_cold_ + (curve_warm_ - curve_cold_) * (b + 10.0f) / 25.0f;
+  // NEW: parallel shift. The two curve points are the supply for a room target equal to
+  // curve_ref_ (20 °C); every °C of target above/below it shifts the whole curve by curve_shift_.
+  return curve_cold_ + (curve_warm_ - curve_cold_) * (b + 10.0f) / 25.0f +
+         curve_shift_ * (room_target_ - curve_ref_);
 }
 
 bool ChofuWP::get_room_fresh() const {
@@ -368,7 +372,7 @@ float ChofuWP::target_supply_(uint32_t now) {
   const float curve = get_curve_supply();
   if (mode_ == MODE_CURVE) {
     set_reason_("heating curve");
-    return curve;
+    return clamp(curve, HEAT_MIN_SUPPLY, setpoint_max_);  // NEW: clamp, the shift can push it up
   }
 
   // ── Room temperature ──
@@ -409,7 +413,7 @@ float ChofuWP::target_supply_(uint32_t now) {
     const float zonder = curve + room_gain_ * fout + room_i_;
     // Do not keep increasing if the target is already at a limit (anti-windup).
     const bool vast = (fout > 0 && zonder >= setpoint_max_) || (fout < 0 && zonder <= HEAT_MIN_SUPPLY);
-    if (room_demand_ && !vast)
+    if (room_demand_ && !vast && fabsf(fout) <= ROOM_I_BAND)  // NEW: no windup during warm-up
       room_i_ = clamp(room_i_ + room_ki_ * fout * minuten, ROOM_I_MIN, ROOM_I_MAX);
   }
 
@@ -510,7 +514,7 @@ void ChofuWP::run_control_() {
   const float sp = sp_eff_;
   const float dt = cooling_ ? (rr - rs) : (rs - rr);
   const float err = std::isnan(sp) ? -100.0f : (cooling_ ? (rs - sp) : (sp - rs));
-  const float band = 0.3f;                       // dead band around setpoint
+  const float band = band_;  /* NEW: configurable, was 0.3 */                       // dead band around setpoint
 
   // Absolute frost protection when cooling (default 5°C, below the factory limit
   // of 6.5°C - so it never gets in the way of legitimate operation). On the raw

@@ -101,12 +101,19 @@ class ChofuWP : public PollingComponent, public uart::UARTDevice {
   // demand applies immediately. A jump in the target thus does not push the unit straight to
   // a high stage that it overshoots.
   void set_setpoint_slew(float c_per_min) { slew_c_per_min_ = c_per_min; }
+  // NEW: dead band (°C) around the supply target in which the stage is held. The supply
+  // ripples by several °C with the compressor running, so 0.3 made the stage hunt.
+  void set_band(float c) { band_ = c; }
 
   // ── Heating curve (heating curve and room temperature mode) ──
   // Two points: the supply at -10 °C and at +15 °C outdoors, straight between and
   // constant outside. Above the heating limit there is no heat demand.
   void set_curve_cold(float v) { curve_cold_ = v; }
   void set_curve_warm(float v) { curve_warm_ = v; }
+  // NEW: parallel shift of the curve with the room target (°C of supply per °C target, reference target)
+  void set_curve_shift(float v) { curve_shift_ = v; }
+  void set_curve_ref(float v) { curve_ref_ = v; }
+  float get_room_i() const { return room_i_; }  // NEW: trim, for tuning
   void set_heating_limit(float c) { heat_limit_ = c; }
   float get_curve_supply() const;  // Heating curve at the current outdoor temperature
 
@@ -171,6 +178,8 @@ class ChofuWP : public PollingComponent, public uart::UARTDevice {
   static constexpr float ROOM_HYST = 0.2f;
   // Limits of the room trim (°C of supply).
   static constexpr float ROOM_I_MIN = -8.0f, ROOM_I_MAX = 12.0f;
+  // NEW: the trim only integrates while the room error is below this (°C).
+  static constexpr float ROOM_I_BAND = 1.0f;
   // Lower limit of a target from heating curve or room temperature: colder water
   // no longer heats anything.
   static constexpr float HEAT_MIN_SUPPLY = 20.0f;
@@ -231,6 +240,7 @@ class ChofuWP : public PollingComponent, public uart::UARTDevice {
   uint32_t stop_wish_ms_{0};   // since when the control has uninterruptedly wanted 0 (0 = not)
   bool stop_hold_{false};      // only for the log line
   float slew_c_per_min_{0.0f};
+  float band_{1.0f};  // NEW
   float sp_eff_{NAN};
   uint32_t sp_eff_ms_{0};
   const char *reason_{"starting up"};
@@ -240,6 +250,7 @@ class ChofuWP : public PollingComponent, public uart::UARTDevice {
 
   // ── Heating curve / room temperature ──
   float curve_cold_{50.0f}, curve_warm_{30.0f};
+  float curve_shift_{1.9f}, curve_ref_{20.0f};  // NEW
   float heat_limit_{18.0f};
   float room_temp_{NAN};
   uint32_t room_ms_{0};
