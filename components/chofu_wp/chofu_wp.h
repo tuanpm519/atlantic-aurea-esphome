@@ -132,6 +132,10 @@ class ChofuWP : public PollingComponent, public uart::UARTDevice {
   // Off as soon as the room is ROOM_HYST above the target; back on when it
   // drops ROOM_HYST below.
   void set_room_off_when_warm(bool b) { room_off_warm_ = b; }
+  void set_room_hyst_off(float k) { room_hyst_off_ = k; }
+  void set_room_hyst_on(float k) { room_hyst_on_ = k; }
+  // Minimum time between two changes to the room request (ms, 0 = off).
+  void set_room_min_hold(uint32_t ms) { room_min_hold_ms_ = ms; }
   bool get_room_fresh() const;
   float get_room_temp() const { return room_temp_; }
 
